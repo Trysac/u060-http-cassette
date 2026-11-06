@@ -9,4 +9,5 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Add `http_cassette`: record and replay HTTP interactions through an injectable transport (`Cassette`, `CassetteTransport`, `Redactor`), redacting credentials in headers, URLs, JSON and form bodies before they reach disk.
 - Initial project structure from the factory utility template.
