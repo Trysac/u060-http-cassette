@@ -8,8 +8,21 @@ Record and replay HTTP interactions through an injectable transport, redacting c
 
 ## Problem
 
-Describe in two or three sentences the concrete problem this utility solves, who hits it, and what
-they do today without it. Replace this paragraph when the first real feature lands.
+Tests that hit real HTTP APIs are slow, flaky and need credentials in CI, while fixtures recorded by
+monkeypatching tools often leak tokens into the repository. http-cassette is an explicit transport
+wrapper that records once, replays deterministically and redacts by default, so integration tests are
+safe to commit. Unlike vcrpy, which patches HTTP libraries globally and stores secrets unless
+configured, it redacts out of the box and patches nothing.
+
+Replay serves the redacted response (documented behaviour): redacted values are what you get back.
+
+### Threat model
+
+Defended: listed headers, query parameter names (exact, case-insensitive, percent-decoded), URL
+userinfo, and listed JSON and form fields in requests and responses.
+
+Not defended: secrets in unlisted fields, free-text bodies, response bodies of other content types,
+and path segments. See [security](docs/SECURITY.md).
 
 ## Install
 
@@ -24,16 +37,51 @@ Requires Python 3.10 or newer. No runtime dependencies.
 ## Usage
 
 ```python
-import http_cassette
+import urllib.error
+import urllib.request
+from pathlib import Path
 
-# normalize() trims surrounding whitespace and lower-cases the text.
-print(http_cassette.normalize("  Hello World "))  # -> "hello world"
+from http_cassette import (
+    Cassette,
+    CassetteTransport,
+    RecordedRequest,
+    RecordedResponse,
+    Redactor,
+)
 
-# Blank input is rejected explicitly instead of returning an empty string.
-try:
-    http_cassette.normalize("   ")
-except ValueError as exc:
-    print(f"rejected: {exc}")
+
+class UrllibTransport:
+    """A minimal network adapter built on urllib."""
+
+    def send(self, request: RecordedRequest) -> RecordedResponse:
+        req = urllib.request.Request(
+            request.url,
+            data=request.body or None,
+            headers=dict(request.headers),
+            method=request.method,
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return RecordedResponse(resp.status, tuple(resp.getheaders()), resp.read())
+        except urllib.error.HTTPError as err:
+            return RecordedResponse(err.code, tuple(err.headers.items()), err.read())
+
+
+cassette = Cassette(
+    Path("fixtures/api.json"),
+    mode="once",  # replay if the file exists, record otherwise
+    redactor=Redactor(),
+)
+transport = CassetteTransport(cassette, UrllibTransport())
+
+request = RecordedRequest(
+    "GET",
+    "https://api.example.com/items?page=1",
+    (("Authorization", "Bearer secret"),),
+    b"",
+)
+response = transport.send(request)  # recorded first run, replayed afterwards
+print(response.status)
 ```
 
 ## Documentation
